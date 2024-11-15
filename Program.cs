@@ -1,7 +1,8 @@
 ﻿using Microsoft.Data.SqlClient;
 using MongoDB.Driver;
+using StackExchange.Redis;
 
-namespace SqlConnectivityTester
+namespace ServiceTester
 {
     class Program
     {
@@ -10,7 +11,7 @@ namespace SqlConnectivityTester
             if (args.Length != 2)
             {
                 Console.WriteLine("Usage: SqlConnectivityTester <database_type> <connection_string>");
-                Console.WriteLine("Database types: sql, mongo");
+                Console.WriteLine("Database types: sql, mongo, redis");
                 return;
             }
 
@@ -25,6 +26,10 @@ namespace SqlConnectivityTester
 
                 case "mongo":
                     TestMongoDbConnection(connectionString);
+                    break;
+                
+                case "redis":
+                    TestRedisConnection(connectionString);
                     break;
 
                 default:
@@ -64,6 +69,21 @@ namespace SqlConnectivityTester
             catch (Exception ex)
             {
                 Console.WriteLine($"An error occurred while connecting to MongoDB: {ex.Message}");
+            }
+        }
+        
+        static void TestRedisConnection(string connectionString)
+        {
+            try
+            {
+                using (var connection = ConnectionMultiplexer.Connect(connectionString))
+                {
+                    Console.WriteLine("Connection to Redis established successfully.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"An error occurred while connecting to Redis: {ex.Message}");
             }
         }
     }
