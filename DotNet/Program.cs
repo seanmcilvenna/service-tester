@@ -1,52 +1,64 @@
 ﻿using Azure.Data.AppConfiguration;
 using Azure.Identity;
 using Azure.Security.KeyVault.Secrets;
+using CommandLine;
 using Microsoft.Data.SqlClient;
 using MongoDB.Driver;
 using StackExchange.Redis;
 
 namespace ServiceTester
 {
+    [Verb("sql", HelpText = "Test SQL Server connection")]
+    public class SqlOptions
+    {
+        [Value(0, Required = true, MetaName = "connectionString", HelpText = "Connection string for SQL Server")]
+        public string ConnectionString { get; set; } = string.Empty;
+    }
+
+    [Verb("mongo", HelpText = "Test MongoDB connection")]
+    public class MongoOptions
+    {
+        [Value(0, Required = true, MetaName = "connectionString", HelpText = "Connection string for MongoDB")]
+        public string ConnectionString { get; set; } = string.Empty;
+    }
+
+    [Verb("redis", HelpText = "Test Redis connection")]
+    public class RedisOptions
+    {
+        [Value(0, Required = true, MetaName = "connectionString", HelpText = "Connection string for Redis")]
+        public string ConnectionString { get; set; } = string.Empty;
+    }
+
+    [Verb("appconfig", HelpText = "Test Azure App Configuration connection")]
+    public class AppConfigOptions
+    {
+        [Value(0, Required = true, MetaName = "connectionString", HelpText = "Connection string for Azure App Configuration")]
+        public string ConnectionString { get; set; } = string.Empty;
+    }
+
+    [Verb("keyvault", HelpText = "Test Azure Key Vault connection")]
+    public class KeyVaultOptions
+    {
+        [Value(0, Required = true, MetaName = "connectionString", HelpText = "Connection string for Azure Key Vault")]
+        public string ConnectionString { get; set; } = string.Empty;
+    }
+
     class Program
     {
         static void Main(string[] args)
         {
-            if (args.Length != 2)
-            {
-                Console.WriteLine("Usage: service-tester <service_type> <connection_string>");
-                Console.WriteLine("Service types: sql, mongo, redis, appconfig, keyvault");
-                return;
-            }
+            Parser.Default.ParseArguments<SqlOptions, MongoOptions, RedisOptions, AppConfigOptions, KeyVaultOptions>(args)
+                .WithParsed<SqlOptions>(opts => TestSqlServerConnection(opts.ConnectionString))
+                .WithParsed<MongoOptions>(opts => TestMongoDbConnection(opts.ConnectionString))
+                .WithParsed<RedisOptions>(opts => TestRedisConnection(opts.ConnectionString))
+                .WithParsed<AppConfigOptions>(opts => TestAzureAppConfig(opts.ConnectionString))
+                .WithParsed<KeyVaultOptions>(opts => TestAzureKeyVault(opts.ConnectionString))
+                .WithNotParsed(HandleParseError);
+        }
 
-            string serviceType = args[0].ToLower();
-            string connectionString = args[1];
-
-            switch (serviceType)
-            {
-                case "sql":
-                    TestSqlServerConnection(connectionString);
-                    break;
-
-                case "mongo":
-                    TestMongoDbConnection(connectionString);
-                    break;
-                
-                case "redis":
-                    TestRedisConnection(connectionString);
-                    break;
-                
-                case "appconfig":
-                    TestAzureAppConfig(connectionString);
-                    break;
-                
-                case "keyvault":
-                    TestAzureKeyVault(connectionString);
-                    break;
-
-                default:
-                    Console.WriteLine("Unsupported database type " + serviceType);
-                    break;
-            }
+        static void HandleParseError(IEnumerable<Error> errs)
+        {
+            // The library handles outputting help/errors by default if we don't do much here.
         }
 
         private static void TestAzureKeyVault(string connectionString)
