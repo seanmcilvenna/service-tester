@@ -1,7 +1,9 @@
-﻿using Azure.Data.AppConfiguration;
+﻿using Azure.Core;
+using Azure.Data.AppConfiguration;
 using Azure.Identity;
 using Azure.Security.KeyVault.Secrets;
 using CommandLine;
+using Confluent.Kafka;
 using Microsoft.Data.SqlClient;
 using MongoDB.Driver;
 using StackExchange.Redis;
@@ -13,6 +15,9 @@ namespace ServiceTester
     {
         [Value(0, Required = true, MetaName = "connectionString", HelpText = "Connection string for SQL Server")]
         public string ConnectionString { get; set; } = string.Empty;
+
+        [Option('m', "managed-identity", HelpText = "Use Azure Managed Identity for authentication")]
+        public bool UseManagedIdentity { get; set; }
     }
 
     [Verb("mongo", HelpText = "Test MongoDB connection")]
@@ -20,6 +25,9 @@ namespace ServiceTester
     {
         [Value(0, Required = true, MetaName = "connectionString", HelpText = "Connection string for MongoDB")]
         public string ConnectionString { get; set; } = string.Empty;
+
+        [Option('m', "managed-identity", HelpText = "Use Azure Managed Identity for authentication")]
+        public bool UseManagedIdentity { get; set; }
     }
 
     [Verb("redis", HelpText = "Test Redis connection")]
@@ -27,6 +35,9 @@ namespace ServiceTester
     {
         [Value(0, Required = true, MetaName = "connectionString", HelpText = "Connection string for Redis")]
         public string ConnectionString { get; set; } = string.Empty;
+
+        [Option('m', "managed-identity", HelpText = "Use Azure Managed Identity for authentication")]
+        public bool UseManagedIdentity { get; set; }
     }
 
     [Verb("appconfig", HelpText = "Test Azure App Configuration connection")]
@@ -34,6 +45,9 @@ namespace ServiceTester
     {
         [Value(0, Required = true, MetaName = "connectionString", HelpText = "Connection string for Azure App Configuration")]
         public string ConnectionString { get; set; } = string.Empty;
+
+        [Option('m', "managed-identity", HelpText = "Use Azure Managed Identity for authentication")]
+        public bool UseManagedIdentity { get; set; }
     }
 
     [Verb("keyvault", HelpText = "Test Azure Key Vault connection")]
@@ -41,33 +55,61 @@ namespace ServiceTester
     {
         [Value(0, Required = true, MetaName = "connectionString", HelpText = "Connection string for Azure Key Vault")]
         public string ConnectionString { get; set; } = string.Empty;
+
+        [Option('m', "managed-identity", HelpText = "Use Azure Managed Identity for authentication")]
+        public bool UseManagedIdentity { get; set; }
+    }
+
+    [Verb("kafka-rest", HelpText = "Test Kafka REST API connection")]
+    public class KafkaRestOptions
+    {
+        [Value(0, Required = true, MetaName = "url", HelpText = "URL for Kafka REST API (e.g., http://localhost:8082)")]
+        public string Url { get; set; } = string.Empty;
+    }
+
+    [Verb("kafka-broker", HelpText = "Test Kafka Broker connection")]
+    public class KafkaBrokerOptions
+    {
+        [Value(0, Required = true, MetaName = "broker", HelpText = "Kafka broker address (e.g., localhost:9092)")]
+        public string Broker { get; set; } = string.Empty;
     }
 
     class Program
     {
         static void Main(string[] args)
         {
-            Parser.Default.ParseArguments<SqlOptions, MongoOptions, RedisOptions, AppConfigOptions, KeyVaultOptions>(args)
-                .WithParsed<SqlOptions>(opts => TestSqlServerConnection(opts.ConnectionString))
-                .WithParsed<MongoOptions>(opts => TestMongoDbConnection(opts.ConnectionString))
-                .WithParsed<RedisOptions>(opts => TestRedisConnection(opts.ConnectionString))
-                .WithParsed<AppConfigOptions>(opts => TestAzureAppConfig(opts.ConnectionString))
-                .WithParsed<KeyVaultOptions>(opts => TestAzureKeyVault(opts.ConnectionString))
+            Parser.Default.ParseArguments<SqlOptions, MongoOptions, RedisOptions, AppConfigOptions, KeyVaultOptions, KafkaRestOptions, KafkaBrokerOptions>(args)
+                .WithParsed<SqlOptions>(opts => TestSqlServerConnection(opts))
+                .WithParsed<MongoOptions>(opts => TestMongoDbConnection(opts))
+                .WithParsed<RedisOptions>(opts => TestRedisConnection(opts))
+                .WithParsed<AppConfigOptions>(opts => TestAzureAppConfig(opts))
+                .WithParsed<KeyVaultOptions>(opts => TestAzureKeyVault(opts))
+                .WithParsed<KafkaRestOptions>(opts => TestKafkaRestConnection(opts))
+                .WithParsed<KafkaBrokerOptions>(opts => TestKafkaBrokerConnection(opts))
                 .WithNotParsed(HandleParseError);
         }
 
-        static void HandleParseError(IEnumerable<Error> errs)
+        static void HandleParseError(IEnumerable<CommandLine.Error> errs)
         {
             // The library handles outputting help/errors by default if we don't do much here.
         }
 
-        private static void TestAzureKeyVault(string connectionString)
+        private static void TestAzureKeyVault(KeyVaultOptions opts)
         {
             try
             {
-                DeviceCodeCredentialOptions options = new DeviceCodeCredentialOptions();
-                var credential = new DeviceCodeCredential(options);
-                var client = new SecretClient(new Uri(connectionString), credential);
+                TokenCredential credential;
+                if (opts.UseManagedIdentity)
+                {
+                    credential = new DefaultAzureCredential();
+                }
+                else
+                {
+                    DeviceCodeCredentialOptions options = new DeviceCodeCredentialOptions();
+                    credential = new DeviceCodeCredential(options);
+                }
+                
+                var client = new SecretClient(new Uri(opts.ConnectionString), credential);
                 var properties = client.GetPropertiesOfSecrets();
                 Console.WriteLine("Connection to Azure Key Vault established successfully. Found " + properties.Count() + " properties of secrets.");
             }
@@ -77,11 +119,20 @@ namespace ServiceTester
             }
         }
 
-        private static void TestAzureAppConfig(string connectionString)
+        private static void TestAzureAppConfig(AppConfigOptions opts)
         {
             try
             {
-                var client = new ConfigurationClient(connectionString);
+                ConfigurationClient client;
+                if (opts.UseManagedIdentity)
+                {
+                    client = new ConfigurationClient(new Uri(opts.ConnectionString), new DefaultAzureCredential());
+                }
+                else
+                {
+                    client = new ConfigurationClient(opts.ConnectionString);
+                }
+                
                 var selector = new SettingSelector { KeyFilter = "*", LabelFilter = "*" };
                 var settings = client.GetConfigurationSettings(selector);
 
@@ -94,10 +145,19 @@ namespace ServiceTester
             }
         }
 
-        static void TestSqlServerConnection(string connectionString)
+        static void TestSqlServerConnection(SqlOptions opts)
         {
             try
             {
+                string connectionString = opts.ConnectionString;
+                if (opts.UseManagedIdentity && !connectionString.Contains("Authentication", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (connectionString.EndsWith(";"))
+                        connectionString += "Authentication=Active Directory Default;";
+                    else
+                        connectionString += ";Authentication=Active Directory Default;";
+                }
+
                 using (SqlConnection connection = new SqlConnection(connectionString))
                 {
                     connection.Open();
@@ -110,10 +170,19 @@ namespace ServiceTester
             }
         }
 
-        static void TestMongoDbConnection(string connectionString)
+        static void TestMongoDbConnection(MongoOptions opts)
         {
             try
             {
+                string connectionString = opts.ConnectionString;
+                if (opts.UseManagedIdentity && !connectionString.Contains("authMechanism", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (connectionString.Contains("?"))
+                        connectionString += "&authMechanism=MONGODB-AZURE-MSI";
+                    else
+                        connectionString += "?authMechanism=MONGODB-AZURE-MSI";
+                }
+
                 var client = new MongoClient(connectionString);
                 var databaseList = client.ListDatabases().ToList();
                 Console.WriteLine("Connection to MongoDB established successfully. Databases:");
@@ -128,11 +197,23 @@ namespace ServiceTester
             }
         }
         
-        static void TestRedisConnection(string connectionString)
+        static void TestRedisConnection(RedisOptions opts)
         {
             try
             {
-                using (var connection = ConnectionMultiplexer.Connect(connectionString))
+                ConnectionMultiplexer connection;
+                if (opts.UseManagedIdentity)
+                {
+                    var configOptions = ConfigurationOptions.Parse(opts.ConnectionString);
+                    configOptions.ConfigureForAzureWithTokenCredentialAsync(new DefaultAzureCredential()).GetAwaiter().GetResult();
+                    connection = ConnectionMultiplexer.Connect(configOptions);
+                }
+                else
+                {
+                    connection = ConnectionMultiplexer.Connect(opts.ConnectionString);
+                }
+
+                using (connection)
                 {
                     Console.WriteLine("Connection to Redis established successfully.");
                 }
@@ -140,6 +221,68 @@ namespace ServiceTester
             catch (Exception ex)
             {
                 Console.WriteLine($"An error occurred while connecting to Redis: {ex.Message}");
+            }
+        }
+
+        static void TestKafkaRestConnection(KafkaRestOptions opts)
+        {
+            try
+            {
+                using var client = new HttpClient();
+                client.BaseAddress = new Uri(opts.Url);
+
+                // Try to get cluster information (standard Kafka REST Proxy v3 API)
+                var response = client.GetAsync("/v3/clusters").GetAwaiter().GetResult();
+                if (response.IsSuccessStatusCode)
+                {
+                    var content = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                    // Basic parsing for information requested in issue
+                    Console.WriteLine("Connection to Kafka REST API established successfully.");
+                    Console.WriteLine($"Response: {content}");
+                }
+                else
+                {
+                    // Fallback to v2 /brokers if v3 is not available
+                    var v2Response = client.GetAsync("/brokers").GetAwaiter().GetResult();
+                    if (v2Response.IsSuccessStatusCode)
+                    {
+                        var content = v2Response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                        Console.WriteLine("Connection to Kafka REST API established successfully (v2).");
+                        Console.WriteLine($"Brokers: {content}");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"Failed to connect to Kafka REST API. Status: {response.StatusCode}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"An error occurred while connecting to Kafka REST API: {ex.Message}");
+            }
+        }
+
+        static void TestKafkaBrokerConnection(KafkaBrokerOptions opts)
+        {
+            try
+            {
+                var config = new AdminClientConfig { BootstrapServers = opts.Broker };
+                using var adminClient = new AdminClientBuilder(config).Build();
+                
+                var metadata = adminClient.GetMetadata(TimeSpan.FromSeconds(10));
+                
+                Console.WriteLine("Connection to Kafka Broker established successfully.");
+                Console.WriteLine("Cluster ID: " + metadata.OriginatingBrokerName); // OriginatingBrokerName is often used if ClusterId is not directly accessible or different in versions
+                Console.WriteLine("Broker Count: " + metadata.Brokers.Count);
+                Console.WriteLine("Brokers:");
+                foreach (var broker in metadata.Brokers)
+                {
+                    Console.WriteLine(" - " + broker.BrokerId + ": " + broker.Host + ":" + broker.Port);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"An error occurred while connecting to Kafka Broker: {ex.Message}");
             }
         }
     }
