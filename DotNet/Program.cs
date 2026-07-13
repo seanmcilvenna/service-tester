@@ -65,6 +65,12 @@ namespace ServiceTester
     {
         [Value(0, Required = true, MetaName = "url", HelpText = "URL for Kafka REST API (e.g., http://localhost:8082)")]
         public string Url { get; set; } = string.Empty;
+
+        [Option('u', "username", HelpText = "Username for Basic Authentication")]
+        public string? Username { get; set; }
+
+        [Option('p', "password", HelpText = "Password for Basic Authentication")]
+        public string? Password { get; set; }
     }
 
     [Verb("kafka-broker", HelpText = "Test Kafka Broker connection")]
@@ -72,6 +78,18 @@ namespace ServiceTester
     {
         [Value(0, Required = true, MetaName = "broker", HelpText = "Kafka broker address (e.g., localhost:9092)")]
         public string Broker { get; set; } = string.Empty;
+
+        [Option('s', "security-protocol", HelpText = "Security protocol (Plaintext, Ssl, SaslPlaintext, SaslSsl)")]
+        public SecurityProtocol? SecurityProtocol { get; set; }
+
+        [Option('m', "sasl-mechanism", HelpText = "SASL mechanism (Plain, ScramSha256, ScramSha512, Gssapi, OAuthBearer)")]
+        public SaslMechanism? SaslMechanism { get; set; }
+
+        [Option('u', "username", HelpText = "SASL username")]
+        public string? Username { get; set; }
+
+        [Option('p', "password", HelpText = "SASL password")]
+        public string? Password { get; set; }
     }
 
     class Program
@@ -231,6 +249,12 @@ namespace ServiceTester
                 using var client = new HttpClient();
                 client.BaseAddress = new Uri(opts.Url);
 
+                if (!string.IsNullOrEmpty(opts.Username))
+                {
+                    var authToken = System.Text.Encoding.ASCII.GetBytes($"{opts.Username}:{opts.Password}");
+                    client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", Convert.ToBase64String(authToken));
+                }
+
                 // Try to get cluster information (standard Kafka REST Proxy v3 API)
                 var response = client.GetAsync("/v3/clusters").GetAwaiter().GetResult();
                 if (response.IsSuccessStatusCode)
@@ -266,7 +290,14 @@ namespace ServiceTester
         {
             try
             {
-                var config = new AdminClientConfig { BootstrapServers = opts.Broker };
+                var config = new AdminClientConfig
+                {
+                    BootstrapServers = opts.Broker,
+                    SecurityProtocol = opts.SecurityProtocol,
+                    SaslMechanism = opts.SaslMechanism,
+                    SaslUsername = opts.Username,
+                    SaslPassword = opts.Password
+                };
                 using var adminClient = new AdminClientBuilder(config).Build();
                 
                 var metadata = adminClient.GetMetadata(TimeSpan.FromSeconds(10));
