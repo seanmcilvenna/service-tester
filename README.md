@@ -3,14 +3,49 @@
 Build to deploy on linux with: `dotnet publish -c Release -r linux-x64 --self-contained
 `
 
-Usage: `service-tester <sql | mongo | redis | appconfig | keyvault> "<connection-string>"`
+Usage: `service-tester <sql | mongo | redis | appconfig | keyvault | kafka-rest | kafka-broker> [options] "<connection-string> | <url> | <broker>"`
+
+## Supported Services
+
+* **SQL Server**
+* **MongoDB**
+* **Redis**
+* **Azure App Configuration**
+* **Azure Key Vault**
+* **Kafka REST Proxy**
+* **Kafka Broker**
+
+## Commands
+
+* `sql`: Test SQL Server connection
+* `mongo`: Test MongoDB connection
+* `redis`: Test Redis connection
+* `appconfig`: Test Azure App Configuration connection
+* `keyvault`: Test Azure Key Vault connection
+* `kafka-rest`: Test Kafka REST API connection
+* `kafka-broker`: Test Kafka Broker connection
+
+## Options
+
+### General Options (SQL, Mongo, Redis, AppConfig, KeyVault)
+* `-m, --managed-identity`: Use Azure Managed Identity for authentication.
+
+### Kafka REST API Options
+* `-u, --username`: Username for Basic Authentication.
+* `-p, --password`: Password for Basic Authentication.
+
+### Kafka Broker Options
+* `-s, --security-protocol`: Security protocol (Plaintext, Ssl, SaslPlaintext, SaslSsl).
+* `-m, --sasl-mechanism`: SASL mechanism (Plain, ScramSha256, ScramSha512, Gssapi, OAuthBearer).
+* `-u, --username`: SASL username.
+* `-p, --password`: SASL password.
 
 ## Notes
 
 * Command "appconfig" = Azure App Configuration
-* Connection string should be enclosed in double-quotes
-* Key vault connection string should be in the format: "https://<keyvault-name>.vault.azure.net"
-* Key vault will prompt you to login with URL in a separate browser to Azure so that it can authenticate your user against vault
+* Connection string / URL / Broker address should be enclosed in double-quotes if it contains special characters.
+* Key vault connection string should be in the format: `https://<keyvault-name>.vault.azure.net`
+* When not using Managed Identity, Key Vault and SQL Server may prompt for interactive login or require specific authentication details in the connection string.
 
 ## ☕ Support My Work
 
