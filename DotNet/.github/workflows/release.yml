@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Get Version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+
+      - name: Publish Windows x64
+        run: dotnet publish -c Release -r win-x64 --self-contained true -o ./publish/win-x64
+
+      - name: Publish Linux x64
+        run: dotnet publish -c Release -r linux-x64 --self-contained true -o ./publish/linux-x64
+
+      - name: Zip Windows Artifact
+        run: |
+          cd publish/win-x64
+          zip -r ../../service-tester-win64-${{ env.VERSION }}.zip .
+
+      - name: Zip Linux Artifact
+        run: |
+          cd publish/linux-x64
+          zip -r ../../service-tester-linux64-${{ env.VERSION }}.zip .
+
+      - name: Create Draft Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: |
+            service-tester-win64-${{ env.VERSION }}.zip
+            service-tester-linux64-${{ env.VERSION }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
