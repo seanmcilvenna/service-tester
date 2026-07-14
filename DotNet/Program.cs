@@ -10,61 +10,91 @@ using StackExchange.Redis;
 
 namespace ServiceTester
 {
+    public interface IConnectionStringOptions
+    {
+        string ConnectionString { get; set; }
+        IEnumerable<string> RemainingArguments { get; set; }
+    }
+
     [Verb("sql", HelpText = "Test SQL Server connection")]
-    public class SqlOptions
+    public class SqlOptions : IConnectionStringOptions
     {
         [Value(0, Required = true, MetaName = "connectionString", HelpText = "Connection string for SQL Server")]
         public string ConnectionString { get; set; } = string.Empty;
+
+        [Value(1, MetaName = "remainingArgs", HelpText = "Remaining arguments (should be empty)")]
+        public IEnumerable<string> RemainingArguments { get; set; } = Enumerable.Empty<string>();
 
         [Option('m', "managed-identity", HelpText = "Use Azure Managed Identity for authentication")]
         public bool UseManagedIdentity { get; set; }
     }
 
     [Verb("mongo", HelpText = "Test MongoDB connection")]
-    public class MongoOptions
+    public class MongoOptions : IConnectionStringOptions
     {
         [Value(0, Required = true, MetaName = "connectionString", HelpText = "Connection string for MongoDB")]
         public string ConnectionString { get; set; } = string.Empty;
+
+        [Value(1, MetaName = "remainingArgs", HelpText = "Remaining arguments (should be empty)")]
+        public IEnumerable<string> RemainingArguments { get; set; } = Enumerable.Empty<string>();
 
         [Option('m', "managed-identity", HelpText = "Use Azure Managed Identity for authentication")]
         public bool UseManagedIdentity { get; set; }
     }
 
     [Verb("redis", HelpText = "Test Redis connection")]
-    public class RedisOptions
+    public class RedisOptions : IConnectionStringOptions
     {
         [Value(0, Required = true, MetaName = "connectionString", HelpText = "Connection string for Redis")]
         public string ConnectionString { get; set; } = string.Empty;
+
+        [Value(1, MetaName = "remainingArgs", HelpText = "Remaining arguments (should be empty)")]
+        public IEnumerable<string> RemainingArguments { get; set; } = Enumerable.Empty<string>();
 
         [Option('m', "managed-identity", HelpText = "Use Azure Managed Identity for authentication")]
         public bool UseManagedIdentity { get; set; }
     }
 
     [Verb("appconfig", HelpText = "Test Azure App Configuration connection")]
-    public class AppConfigOptions
+    public class AppConfigOptions : IConnectionStringOptions
     {
         [Value(0, Required = true, MetaName = "connectionString", HelpText = "Connection string for Azure App Configuration")]
         public string ConnectionString { get; set; } = string.Empty;
+
+        [Value(1, MetaName = "remainingArgs", HelpText = "Remaining arguments (should be empty)")]
+        public IEnumerable<string> RemainingArguments { get; set; } = Enumerable.Empty<string>();
 
         [Option('m', "managed-identity", HelpText = "Use Azure Managed Identity for authentication")]
         public bool UseManagedIdentity { get; set; }
     }
 
     [Verb("keyvault", HelpText = "Test Azure Key Vault connection")]
-    public class KeyVaultOptions
+    public class KeyVaultOptions : IConnectionStringOptions
     {
         [Value(0, Required = true, MetaName = "connectionString", HelpText = "Connection string for Azure Key Vault")]
         public string ConnectionString { get; set; } = string.Empty;
+
+        [Value(1, MetaName = "remainingArgs", HelpText = "Remaining arguments (should be empty)")]
+        public IEnumerable<string> RemainingArguments { get; set; } = Enumerable.Empty<string>();
 
         [Option('m', "managed-identity", HelpText = "Use Azure Managed Identity for authentication")]
         public bool UseManagedIdentity { get; set; }
     }
 
+    public interface IUrlOptions
+    {
+        string Url { get; set; }
+        IEnumerable<string> RemainingArguments { get; set; }
+    }
+
     [Verb("kafka-rest", HelpText = "Test Kafka REST API connection")]
-    public class KafkaRestOptions
+    public class KafkaRestOptions : IUrlOptions
     {
         [Value(0, Required = true, MetaName = "url", HelpText = "URL for Kafka REST API (e.g., http://localhost:8082)")]
         public string Url { get; set; } = string.Empty;
+
+        [Value(1, MetaName = "remainingArgs", HelpText = "Remaining arguments (should be empty)")]
+        public IEnumerable<string> RemainingArguments { get; set; } = Enumerable.Empty<string>();
 
         [Option('u', "username", HelpText = "Username for Basic Authentication")]
         public string? Username { get; set; }
@@ -73,11 +103,20 @@ namespace ServiceTester
         public string? Password { get; set; }
     }
 
+    public interface IBrokerOptions
+    {
+        string Broker { get; set; }
+        IEnumerable<string> RemainingArguments { get; set; }
+    }
+
     [Verb("kafka-broker", HelpText = "Test Kafka Broker connection")]
-    public class KafkaBrokerOptions
+    public class KafkaBrokerOptions : IBrokerOptions
     {
         [Value(0, Required = true, MetaName = "broker", HelpText = "Kafka broker address (e.g., localhost:9092)")]
         public string Broker { get; set; } = string.Empty;
+
+        [Value(1, MetaName = "remainingArgs", HelpText = "Remaining arguments (should be empty)")]
+        public IEnumerable<string> RemainingArguments { get; set; } = Enumerable.Empty<string>();
 
         [Option('s', "security-protocol", HelpText = "Security protocol (Plaintext, Ssl, SaslPlaintext, SaslSsl)")]
         public SecurityProtocol? SecurityProtocol { get; set; }
@@ -97,14 +136,37 @@ namespace ServiceTester
         static void Main(string[] args)
         {
             Parser.Default.ParseArguments<SqlOptions, MongoOptions, RedisOptions, AppConfigOptions, KeyVaultOptions, KafkaRestOptions, KafkaBrokerOptions>(args)
-                .WithParsed<SqlOptions>(opts => TestSqlServerConnection(opts))
-                .WithParsed<MongoOptions>(opts => TestMongoDbConnection(opts))
-                .WithParsed<RedisOptions>(opts => TestRedisConnection(opts))
-                .WithParsed<AppConfigOptions>(opts => TestAzureAppConfig(opts))
-                .WithParsed<KeyVaultOptions>(opts => TestAzureKeyVault(opts))
-                .WithParsed<KafkaRestOptions>(opts => TestKafkaRestConnection(opts))
-                .WithParsed<KafkaBrokerOptions>(opts => TestKafkaBrokerConnection(opts))
+                .WithParsed<SqlOptions>(opts => RunIfValid(opts, TestSqlServerConnection))
+                .WithParsed<MongoOptions>(opts => RunIfValid(opts, TestMongoDbConnection))
+                .WithParsed<RedisOptions>(opts => RunIfValid(opts, TestRedisConnection))
+                .WithParsed<AppConfigOptions>(opts => RunIfValid(opts, TestAzureAppConfig))
+                .WithParsed<KeyVaultOptions>(opts => RunIfValid(opts, TestAzureKeyVault))
+                .WithParsed<KafkaRestOptions>(opts => RunIfValid(opts, TestKafkaRestConnection))
+                .WithParsed<KafkaBrokerOptions>(opts => RunIfValid(opts, TestKafkaBrokerConnection))
                 .WithNotParsed(HandleParseError);
+        }
+
+        static void RunIfValid<T>(T opts, Action<T> action) where T : notnull
+        {
+            var remainingArgs = GetRemainingArgs(opts);
+            if (remainingArgs.Any())
+            {
+                Console.WriteLine("Error: Multiple positional arguments detected. If your connection string contains spaces, ensure it is correctly quoted.");
+                Console.WriteLine("Detected extra parts: " + string.Join(" ", remainingArgs));
+                Environment.Exit(1);
+            }
+            action(opts);
+        }
+
+        static IEnumerable<string> GetRemainingArgs(object opts)
+        {
+            return opts switch
+            {
+                IConnectionStringOptions c => c.RemainingArguments,
+                IUrlOptions u => u.RemainingArguments,
+                IBrokerOptions b => b.RemainingArguments,
+                _ => Enumerable.Empty<string>()
+            };
         }
 
         static void HandleParseError(IEnumerable<CommandLine.Error> errs)
