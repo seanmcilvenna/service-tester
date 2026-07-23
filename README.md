@@ -3,7 +3,7 @@
 Build to deploy on linux with: `dotnet publish -c Release -r linux-x64 --self-contained
 `
 
-Usage: `service-tester <sql | mongo | redis | appconfig | keyvault | kafka-rest | kafka-broker> [options] "<connection-string> | <url> | <broker>"`
+Usage: `service-tester <sql | mongo | redis | appconfig | keyvault | blob-storage | kafka-rest | kafka-broker> [options] "<connection-string> | <url> | <broker>"`
 
 ## Supported Services
 
@@ -12,6 +12,7 @@ Usage: `service-tester <sql | mongo | redis | appconfig | keyvault | kafka-rest 
 * **Redis**
 * **Azure App Configuration**
 * **Azure Key Vault**
+* **Azure Blob Storage / Storage Account**
 * **Kafka REST Proxy**
 * **Kafka Broker**
 
@@ -22,13 +23,24 @@ Usage: `service-tester <sql | mongo | redis | appconfig | keyvault | kafka-rest 
 * `redis`: Test Redis connection
 * `appconfig`: Test Azure App Configuration connection
 * `keyvault`: Test Azure Key Vault connection
+* `blob-storage`: Test Azure Storage account connectivity (blob container, optional resource listing)
 * `kafka-rest`: Test Kafka REST API connection
 * `kafka-broker`: Test Kafka Broker connection
 
 ## Options
 
-### General Options (SQL, Mongo, Redis, AppConfig, KeyVault)
+### General Options (SQL, Mongo, Redis, AppConfig, KeyVault, Blob Storage)
 * `-m, --managed-identity`: Use Azure Managed Identity for authentication.
+
+### Blob Storage Options
+* `-c, --container`: Specific blob container to test connectivity for.
+* `-f, --file-share`: Specific file share to test connectivity for.
+* `-l, --list`: List accessible blob containers, file shares, and queues.
+
+#### Notes
+
+* With `--managed-identity`, provide a Blob service URI like: `https://<account-name>.blob.core.windows.net`
+* Without `--managed-identity`, use an Azure Storage connection string in key/value format (not just `https://...`), for example: `service-tester blob-storage "DefaultEndpointsProtocol=https;AccountName=XXX;AccountKey=YYY;EndpointSuffix=core.windows.net" --list`
 
 ### Kafka REST API Options
 * `-u, --username`: Username for Basic Authentication.

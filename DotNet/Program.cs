@@ -2,6 +2,9 @@
 using Azure.Data.AppConfiguration;
 using Azure.Identity;
 using Azure.Security.KeyVault.Secrets;
+using Azure.Storage.Blobs;
+using Azure.Storage.Files.Shares;
+using Azure.Storage.Queues;
 using CommandLine;
 using Confluent.Kafka;
 using Microsoft.Data.SqlClient;
@@ -19,7 +22,7 @@ namespace ServiceTester
     [Verb("sql", HelpText = "Test SQL Server connection")]
     public class SqlOptions : IConnectionStringOptions
     {
-        [Value(0, Required = true, MetaName = "connectionString", HelpText = "Connection string for SQL Server")]
+        [Value(0, Required = true, MetaName = "connectionString", HelpText = "Connection string for SQL Server (i.e. \"Server=tcp:XXX,1433;Initial Catalog=YYY;User Id=objectId;Password=secret;Authentication='Active Directory Service Principal'\")")]
         public string ConnectionString { get; set; } = string.Empty;
 
         [Value(1, MetaName = "remainingArgs", HelpText = "Remaining arguments (should be empty)")]
@@ -58,7 +61,7 @@ namespace ServiceTester
     [Verb("appconfig", HelpText = "Test Azure App Configuration connection")]
     public class AppConfigOptions : IConnectionStringOptions
     {
-        [Value(0, Required = true, MetaName = "connectionString", HelpText = "Connection string for Azure App Configuration")]
+        [Value(0, Required = true, MetaName = "connectionString", HelpText = "Connection string for Azure App Configuration (i.e. \"https://resource.azconfig.io\")")]
         public string ConnectionString { get; set; } = string.Empty;
 
         [Value(1, MetaName = "remainingArgs", HelpText = "Remaining arguments (should be empty)")]
@@ -79,6 +82,28 @@ namespace ServiceTester
 
         [Option('m', "managed-identity", HelpText = "Use Azure Managed Identity for authentication")]
         public bool UseManagedIdentity { get; set; }
+    }
+
+    [Verb("blob-storage", HelpText = "Test Azure Storage account connection")]
+    public class BlobStorageOptions : IConnectionStringOptions
+    {
+        [Value(0, Required = true, MetaName = "connectionString", HelpText = "Connection string for Azure Storage, or Blob service URI when using --managed-identity (e.g. https://myaccount.blob.core.windows.net)")]
+        public string ConnectionString { get; set; } = string.Empty;
+
+        [Value(1, MetaName = "remainingArgs", HelpText = "Remaining arguments (should be empty)")]
+        public IEnumerable<string> RemainingArguments { get; set; } = Enumerable.Empty<string>();
+
+        [Option('m', "managed-identity", HelpText = "Use Azure Managed Identity for authentication")]
+        public bool UseManagedIdentity { get; set; }
+
+        [Option('c', "container", HelpText = "Specific blob container to test")]
+        public string? Container { get; set; }
+
+        [Option('f', "file-share", HelpText = "Specific file share to test")]
+        public string? FileShare { get; set; }
+
+        [Option('l', "list", HelpText = "List accessible blob containers, file shares, and queues")]
+        public bool List { get; set; }
     }
 
     public interface IUrlOptions
@@ -135,12 +160,13 @@ namespace ServiceTester
     {
         static void Main(string[] args)
         {
-            Parser.Default.ParseArguments<SqlOptions, MongoOptions, RedisOptions, AppConfigOptions, KeyVaultOptions, KafkaRestOptions, KafkaBrokerOptions>(args)
+            Parser.Default.ParseArguments<SqlOptions, MongoOptions, RedisOptions, AppConfigOptions, KeyVaultOptions, BlobStorageOptions, KafkaRestOptions, KafkaBrokerOptions>(args)
                 .WithParsed<SqlOptions>(opts => RunIfValid(opts, TestSqlServerConnection))
                 .WithParsed<MongoOptions>(opts => RunIfValid(opts, TestMongoDbConnection))
                 .WithParsed<RedisOptions>(opts => RunIfValid(opts, TestRedisConnection))
                 .WithParsed<AppConfigOptions>(opts => RunIfValid(opts, TestAzureAppConfig))
                 .WithParsed<KeyVaultOptions>(opts => RunIfValid(opts, TestAzureKeyVault))
+                .WithParsed<BlobStorageOptions>(opts => RunIfValid(opts, TestAzureBlobStorage))
                 .WithParsed<KafkaRestOptions>(opts => RunIfValid(opts, TestKafkaRestConnection))
                 .WithParsed<KafkaBrokerOptions>(opts => RunIfValid(opts, TestKafkaBrokerConnection))
                 .WithNotParsed(HandleParseError);
@@ -302,6 +328,240 @@ namespace ServiceTester
             {
                 Console.WriteLine($"An error occurred while connecting to Redis: {ex.Message}");
             }
+        }
+
+        static void TestAzureBlobStorage(BlobStorageOptions opts)
+        {
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(opts.Container) && !string.IsNullOrWhiteSpace(opts.FileShare))
+                {
+                    Console.WriteLine("Please specify only one of --container or --file-share per request.");
+                    return;
+                }
+
+                if (opts.UseManagedIdentity)
+                {
+                    var credential = new DefaultAzureCredential();
+                    var blobServiceClient = new BlobServiceClient(new Uri(opts.ConnectionString), credential);
+                    var accountBaseUri = GetStorageAccountBaseUri(blobServiceClient.Uri);
+
+                    if (!string.IsNullOrWhiteSpace(opts.Container))
+                    {
+                        var containerClient = blobServiceClient.GetBlobContainerClient(opts.Container);
+                        ReportContainerAccess(containerClient, opts.Container);
+                        return;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(opts.FileShare))
+                    {
+                        var shareServiceClient = new ShareServiceClient(new Uri($"{accountBaseUri}.file.core.windows.net"), credential);
+                        var shareClient = shareServiceClient.GetShareClient(opts.FileShare);
+                        ReportFileShareAccess(shareClient, opts.FileShare);
+                        return;
+                    }
+
+                    if (opts.List)
+                    {
+                        ListStorageResourcesByEndpoint(blobServiceClient, credential);
+                        return;
+                    }
+
+                    blobServiceClient.GetProperties();
+                    Console.WriteLine("Connection to Azure Blob Storage established successfully.");
+                    return;
+                }
+
+                var blobServiceFromConnectionString = new BlobServiceClient(opts.ConnectionString);
+                var shareServiceFromConnectionString = new ShareServiceClient(opts.ConnectionString);
+
+                if (!string.IsNullOrWhiteSpace(opts.Container))
+                {
+                    var containerClient = blobServiceFromConnectionString.GetBlobContainerClient(opts.Container);
+                    ReportContainerAccess(containerClient, opts.Container);
+                    return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(opts.FileShare))
+                {
+                    var shareClient = shareServiceFromConnectionString.GetShareClient(opts.FileShare);
+                    ReportFileShareAccess(shareClient, opts.FileShare);
+                    return;
+                }
+
+                if (opts.List)
+                {
+                    ListStorageResourcesByConnectionString(opts.ConnectionString, blobServiceFromConnectionString);
+                    return;
+                }
+
+                blobServiceFromConnectionString.GetProperties();
+                Console.WriteLine("Connection to Azure Blob Storage established successfully.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"An error occurred while connecting to Azure Blob Storage: {ex.Message}");
+            }
+        }
+
+        static void ReportContainerAccess(BlobContainerClient containerClient, string containerName)
+        {
+            bool canRead;
+            string? readError = null;
+            try
+            {
+                containerClient.GetProperties();
+                canRead = true;
+            }
+            catch (Exception ex)
+            {
+                canRead = false;
+                readError = ex.Message;
+            }
+
+            bool canWrite;
+            string? writeError = null;
+            var testBlobName = $"service-tester-access-check-{Guid.NewGuid():N}";
+            var testBlobClient = containerClient.GetBlobClient(testBlobName);
+
+            try
+            {
+                using var stream = new MemoryStream(Array.Empty<byte>());
+                testBlobClient.Upload(stream);
+                testBlobClient.DeleteIfExists();
+                canWrite = true;
+            }
+            catch (Exception ex)
+            {
+                canWrite = false;
+                writeError = ex.Message;
+            }
+
+            Console.WriteLine($"Connection to Azure Blob Storage established. Container '{containerName}' access:");
+            Console.WriteLine($" - Read: {(canRead ? "Yes" : "No")}");
+            Console.WriteLine($" - Write: {(canWrite ? "Yes" : "No")}");
+
+            if (!canRead && !string.IsNullOrWhiteSpace(readError))
+            {
+                Console.WriteLine($"   Read check error: {readError}");
+            }
+
+            if (!canWrite && !string.IsNullOrWhiteSpace(writeError))
+            {
+                Console.WriteLine($"   Write check error: {writeError}");
+            }
+        }
+
+        static void ReportFileShareAccess(ShareClient shareClient, string shareName)
+        {
+            bool canRead;
+            string? readError = null;
+            try
+            {
+                shareClient.GetProperties();
+                canRead = true;
+            }
+            catch (Exception ex)
+            {
+                canRead = false;
+                readError = ex.Message;
+            }
+
+            bool canWrite;
+            string? writeError = null;
+            var testFileName = $"service-tester-access-check-{Guid.NewGuid():N}";
+            var rootDirectoryClient = shareClient.GetRootDirectoryClient();
+            var testFileClient = rootDirectoryClient.GetFileClient(testFileName);
+
+            try
+            {
+                testFileClient.Create(0);
+                testFileClient.DeleteIfExists();
+                canWrite = true;
+            }
+            catch (Exception ex)
+            {
+                canWrite = false;
+                writeError = ex.Message;
+            }
+
+            Console.WriteLine($"Connection to Azure Storage File Share established. File share '{shareName}' access:");
+            Console.WriteLine($" - Read: {(canRead ? "Yes" : "No")}");
+            Console.WriteLine($" - Write: {(canWrite ? "Yes" : "No")}");
+
+            if (!canRead && !string.IsNullOrWhiteSpace(readError))
+            {
+                Console.WriteLine($"   Read check error: {readError}");
+            }
+
+            if (!canWrite && !string.IsNullOrWhiteSpace(writeError))
+            {
+                Console.WriteLine($"   Write check error: {writeError}");
+            }
+        }
+
+        static void ListStorageResourcesByEndpoint(BlobServiceClient blobServiceClient, TokenCredential credential)
+        {
+            Console.WriteLine("Accessible Blob Containers:");
+            foreach (var container in blobServiceClient.GetBlobContainers())
+            {
+                Console.WriteLine($" - {container.Name}");
+            }
+
+            var accountBaseUri = GetStorageAccountBaseUri(blobServiceClient.Uri);
+
+            var shareServiceClient = new ShareServiceClient(new Uri($"{accountBaseUri}.file.core.windows.net"), credential);
+            Console.WriteLine("Accessible File Shares:");
+            foreach (var share in shareServiceClient.GetShares())
+            {
+                Console.WriteLine($" - {share.Name}");
+            }
+
+            var queueServiceClient = new QueueServiceClient(new Uri($"{accountBaseUri}.queue.core.windows.net"), credential);
+            Console.WriteLine("Accessible Queues:");
+            foreach (var queue in queueServiceClient.GetQueues())
+            {
+                Console.WriteLine($" - {queue.Name}");
+            }
+
+            Console.WriteLine("Storage resource listing completed successfully.");
+        }
+
+        static void ListStorageResourcesByConnectionString(string connectionString, BlobServiceClient blobServiceClient)
+        {
+            Console.WriteLine("Accessible Blob Containers:");
+            foreach (var container in blobServiceClient.GetBlobContainers())
+            {
+                Console.WriteLine($" - {container.Name}");
+            }
+
+            var shareServiceClient = new ShareServiceClient(connectionString);
+            Console.WriteLine("Accessible File Shares:");
+            foreach (var share in shareServiceClient.GetShares())
+            {
+                Console.WriteLine($" - {share.Name}");
+            }
+
+            var queueServiceClient = new QueueServiceClient(connectionString);
+            Console.WriteLine("Accessible Queues:");
+            foreach (var queue in queueServiceClient.GetQueues())
+            {
+                Console.WriteLine($" - {queue.Name}");
+            }
+
+            Console.WriteLine("Storage resource listing completed successfully.");
+        }
+
+        static string GetStorageAccountBaseUri(Uri blobServiceUri)
+        {
+            var host = blobServiceUri.Host;
+            const string blobSuffix = ".blob.core.windows.net";
+            if (!host.EndsWith(blobSuffix, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException("When using --managed-identity, provide a Blob service URI like https://<account>.blob.core.windows.net");
+            }
+
+            return $"{blobServiceUri.Scheme}://{host[..^blobSuffix.Length]}";
         }
 
         static void TestKafkaRestConnection(KafkaRestOptions opts)
